@@ -26,24 +26,8 @@ public protocol ArchiveWriteable {
 ///
 public protocol ArchiveReadable {
 	init()
+	
 	mutating func read(from archive: ArchiveReader) throws
-}
-
-//==---------------------------------------------------------
-/// This is the primary protocol your types should conform to.
-/// They will automatically get write(to:) and read(from:).
-/// You will need to supply ArchiveReadable's default init()
-/// initializer as well as Archivable's archivingKeyPaths
-/// static property which lists the key paths you wish to be
-/// included in the generated archives.
-///
-public protocol Archivable: ArchiveWriteable & ArchiveReadable {
-	typealias Archive = ArchivableKeyPath<Self>
-
-	/// This list is used to determine which properties are
-	/// saved and restored from the archive. The order listed
-	/// is the same order they are read and written.
-	static var archivingKeyPaths: [Archive] { get }
 
 	/// If you need to do something after a type instance "wakes up"
 	/// then this is where you can do it. Most of the time you don't
@@ -51,21 +35,39 @@ public protocol Archivable: ArchiveWriteable & ArchiveReadable {
 	mutating func awake(from archive: ArchiveReader) throws
 }
 
-// Default implementations can make life easier sometimes.
-extension Archivable {
-	
-	static var archivingKeyPaths: [Archive] {
-		return []
-	}
+//==---------------------------------------------------------
+/// Use this protocol if your type doesn't need to archive
+/// any properties. Useful for enums and such.
+///
+public typealias Archivable = ArchiveReadable & ArchiveWriteable
 
-	mutating func awake(from archive: ArchiveReader) throws {
+//==---------------------------------------------------------
+/// This is the magic protocol your types should conform to.
+/// They will automatically get write(to:) and read(from:).
+/// You will need to supply ArchiveReadable's default init()
+/// initializer as well as Archivable's archivingKeyPaths
+/// static property which lists the key paths you wish to be
+/// included in the generated archives.
+///
+public protocol KeyPathArchivable: ArchiveWriteable & ArchiveReadable {
+	typealias Archive = ArchivableKeyPath<Self>
+
+	/// This list is used to determine which properties are
+	/// saved and restored from the archive. The order listed
+	/// is the same order they are read and written.
+	static var archivingKeyPaths: [Archive] { get }
+}
+
+// Default implementations can make life easier sometimes.
+extension ArchiveReadable {
+	public mutating func awake(from archive: ArchiveReader) throws {
 	}
 }
 
 // here's the magic that makes Archivable read/write using
 // the keypaths specified by the static archivingKeyPaths
 // property:
-public struct ArchivableKeyPath<Root: Archivable> {
+public struct ArchivableKeyPath<Root: KeyPathArchivable> {
 	fileprivate let valueType: ArchiveReadable.Type
 	fileprivate let get: (Root)->ArchiveWriteable
 	fileprivate let set: (inout Root, ArchiveReadable)->Void
@@ -84,7 +86,7 @@ public struct ArchivableKeyPath<Root: Archivable> {
 	}
 }
 
-extension Archivable {
+extension KeyPathArchivable {
 	func write(to archive: ArchiveWriter) throws {
 		for property in Self.archivingKeyPaths {
 			try archive.write(property.get(self))
@@ -95,7 +97,6 @@ extension Archivable {
 		for property in Self.archivingKeyPaths {
 			property.set(&self, try archive.readArchiveReadable(property.valueType))
 		}
-		try awake(from: archive)
 	}
 }
 
@@ -104,26 +105,24 @@ extension Archivable {
 // types that can read/write their raw bytes directly:
 //==---------------------------------------------------------
 
-extension Int8: ArchiveWriteable, ArchiveReadable {}
-extension UInt8: ArchiveWriteable, ArchiveReadable {}
-extension Int16: ArchiveWriteable, ArchiveReadable {}
-extension UInt16: ArchiveWriteable, ArchiveReadable {}
-extension Int32: ArchiveWriteable, ArchiveReadable {}
-extension UInt32: ArchiveWriteable, ArchiveReadable {}
-extension Int64: ArchiveWriteable, ArchiveReadable {}
-extension UInt64: ArchiveWriteable, ArchiveReadable {}
-extension Float32: ArchiveWriteable, ArchiveReadable {}
-extension Float64: ArchiveWriteable, ArchiveReadable {}
-extension Data: ArchiveWriteable, ArchiveReadable {}
+extension Int8: Archivable {}
+extension UInt8: Archivable {}
+extension Int16: Archivable {}
+extension UInt16: Archivable {}
+extension Int32: Archivable {}
+extension UInt32: Archivable {}
+extension Int64: Archivable {}
+extension UInt64: Archivable {}
+extension Float32: Archivable {}
+extension Float64: Archivable {}
+extension Data: Archivable {}
 
 // (and this is how they do it...)
-extension RawByteConvertable where Self: ArchiveWriteable {
+extension RawByteConvertable where Self: Archivable {
 	public func write(to archive: ArchiveWriter) throws {
 		try archive.writeRawBytes(self.rawBytes)
 	}
-}
 
-extension RawByteConvertable where Self: ArchiveReadable {
 	public mutating func read(from archive: ArchiveReader) throws {
 		try self = .init(rawBytes: archive.readRawBytes(count: MemoryLayout<Self>.size))
 	}
@@ -136,7 +135,7 @@ extension RawByteConvertable where Self: ArchiveReadable {
 // encoding/decoding is handled by ArchiveWriter/ArchiveReader
 //==---------------------------------------------------------
 
-extension String: ArchiveWriteable, ArchiveReadable {
+extension String: Archivable {
 	public mutating func read(from archive: ArchiveReader) throws { try self = archive.read() }
 	public func write(to archive: ArchiveWriter) throws { try archive.write(self) }
 }
@@ -146,66 +145,59 @@ extension String: ArchiveWriteable, ArchiveReadable {
 // Types that are encoded in terms of other archivable types:
 //==---------------------------------------------------------
 
-extension Bool: ArchiveWriteable, ArchiveReadable {
+extension Bool: Archivable {
 	public mutating func read(from archive: ArchiveReader) throws { try self = (archive.read() as UInt8 > 0) }
 	public func write(to archive: ArchiveWriter) throws { try archive.write(UInt8(self ? 1 : 0)) }
 }
 
 // Int is always stored as an Int64
-extension Int: ArchiveWriteable, ArchiveReadable {
+extension Int: Archivable {
 	public mutating func read(from archive: ArchiveReader) throws { try self = Int(archive.read() as Int64) }
 	public func write(to archive: ArchiveWriter) throws { try archive.write(Int64(self)) }
 }
 
 // UInt is always stored as a UInt64
-extension UInt: ArchiveWriteable, ArchiveReadable {
+extension UInt: Archivable {
 	public mutating func read(from archive: ArchiveReader) throws { try self = UInt(archive.read() as UInt64) }
 	public func write(to archive: ArchiveWriter) throws { try archive.write(UInt64(self)) }
 }
 
-extension Array: ArchiveReadable where Element: ArchiveReadable {
+extension Array: Archivable where Element: Archivable {
 	public mutating func read(from archive: ArchiveReader) throws {
 		let count: Int = try archive.read()
 		self = try (0..<count).map({ _ in try archive.read() })
 	}
-}
 
-extension Array: ArchiveWriteable where Element: ArchiveWriteable {
 	public func write(to archive: ArchiveWriter) throws {
 		try archive.write(count)
 		try forEach({ try archive.write($0) })
 	}
 }
 
-extension Dictionary: ArchiveWriteable where Key: ArchiveWriteable, Value: ArchiveWriteable {
+extension Dictionary: Archivable where Key: Archivable, Value: Archivable {
 	public func write(to archive: ArchiveWriter) throws {
 		try archive.write(Array(keys))
 		try archive.write(Array(values))
 	}
-}
 
-extension Dictionary: ArchiveReadable where Key: ArchiveReadable, Value: ArchiveReadable {
 	public mutating func read(from archive: ArchiveReader) throws {
 		let keys: [Key] = try archive.read()
 		let values: [Value] = try archive.read()
-		removeAll(keepingCapacity: true)
 		zip(keys, values).forEach({ updateValue($1, forKey: $0) })
 	}
 }
 
-extension Set: ArchiveReadable where Element: ArchiveReadable {
+extension Set: Archivable where Element: Archivable {
 	public mutating func read(from archive: ArchiveReader) throws {
 		self = Set(try archive.read() as [Element])
 	}
-}
 
-extension Set: ArchiveWriteable where Element: ArchiveWriteable {
 	public func write(to archive: ArchiveWriter) throws {
 		try archive.write(Array(self))
 	}
 }
 
-extension Optional: ArchiveWriteable where Wrapped: ArchiveWriteable {
+extension Optional: Archivable where Wrapped: Archivable {
 	public func write(to archive: ArchiveWriter) throws {
 		if let value = self {
 			try archive.write(true)
@@ -214,10 +206,9 @@ extension Optional: ArchiveWriteable where Wrapped: ArchiveWriteable {
 			try archive.write(false)
 		}
 	}
-}
 
-extension Optional: ArchiveReadable where Wrapped: ArchiveReadable {
 	public init() { self = .none }
+	
 	public mutating func read(from archive: ArchiveReader) throws {
 		if try archive.read() as Bool {
 			try self = .some(archive.read())
@@ -400,6 +391,7 @@ public final class ArchiveReader {
 		var obj = type.init()
 		objects[id] = obj
 		try obj.read(from: self)
+		try obj.awake(from: self)
 		return obj
 	}
 	
@@ -411,6 +403,7 @@ public final class ArchiveReader {
 		} else {
 			var value = type.init()
 			try value.read(from: self)
+			try value.awake(from: self)
 			return value
 		}
 	}
